@@ -23,7 +23,6 @@ from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.backends import Backend, create_backend
 from traust_ledger._internal.backends.constants import EMPTY_LAYER
-from traust_ledger._internal.events import attach_identity
 from traust_ledger._internal.integrity.signing import SigningConfig
 from traust_ledger._internal.layer_finalize import finalize_layer
 from traust_ledger._internal.writer import LedgerWriter
@@ -319,21 +318,20 @@ class LedgerClient:
         observation). Returns the count stamped alongside the new root.
         """
         from traust_ledger.errors import ServiceError
+        from traust_ledger.handlers.stamp_handler import (
+            stamp_event_identities as _stamp,
+        )
 
         path = layer_file_path(self._config.data_dir, layer_id)
         config = self._config
 
-        def _stamp_and_finalize(layer: dict) -> tuple[str, int]:
-            stamped = sum(
-                1 for e in layer.get("events") or [] if attach_identity(e, fingerprints)
-            )
-            return finalize_layer(layer, config, layer_id=layer_id), stamped
+        def _stamp_and_finalize(layer: dict) -> dict[str, Any]:
+            return _stamp(layer, fingerprints, config, layer_id=layer_id)
 
         try:
-            merkle_root, stamped = self._backend.mutate(path, _stamp_and_finalize)
+            return self._backend.mutate(path, _stamp_and_finalize)
         except ServiceError as exc:
             raise LedgerError(exc.detail) from exc
-        return {"merkle_root": merkle_root, "layer_id": layer_id, "stamped": stamped}
 
     def create(
         self,
