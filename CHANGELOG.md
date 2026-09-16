@@ -2,6 +2,22 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.3.0]
+
+## Changes
+
+- **Two write-path verbs are now reachable over REST**, so remote consumers
+  (the Go SDK) can drive them the way in-process Python already could:
+  - `POST /v1/ledger/layers/{layer_id}/stamp` — backfill event fingerprints
+    from a `finding_ref -> fingerprint` map and re-sign the layer. Never
+    overwrites an existing fingerprint. Returns the new Merkle root and the
+    count stamped.
+  - `GET /v1/ledger/whoami` — return the token-verified `LayerActor` for the
+    caller, without recording anything.
+- **`stamp` has a single implementation.** `LedgerClient.stamp_event_identities`
+  and the new route both call `handlers.stamp_handler.stamp_event_identities`,
+  matching the convergence pattern `sign_handler` already uses for CLI/REST/
+  client. No behavior change for existing callers.
 ## [0.2.3]
 
 - Point the traust-contracts pin at the new `traust-security` GitHub
