@@ -2,6 +2,13 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.2.1]
+
+- Pin traust-contracts v0.3.0, which adds the optional `evidence[]` block to
+  remediation reports. No ledger behaviour changes; the bump is so producers
+  downstream can emit the block at all (the remediation schema is
+  `additionalProperties: false`, so an unpinned consumer rejects it).
+
 ## [0.2.0]
 
 ## Changes
