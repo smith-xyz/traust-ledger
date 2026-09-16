@@ -2,6 +2,14 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.2.3]
+
+- Point the traust-contracts pin at the new `traust-security` GitHub
+  organisation. A release is required rather than an in-place URL edit: uv
+  honours `[tool.uv.sources]` inside git dependencies, so a consumer pinning
+  `v0.2.2` inherits that tag's old-org URL and conflicts with its own. The
+  fix has to travel as a new tag, bottom-up.
+
 ## [0.2.2]
 
 - Pin traust-contracts v0.4.0, which extends the typed patch-evidence block to
