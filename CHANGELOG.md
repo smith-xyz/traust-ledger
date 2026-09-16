@@ -19,6 +19,29 @@ All notable changes to traust-ledger are documented here.
   matching the convergence pattern `sign_handler` already uses for CLI/REST/
   client. No behavior change for existing callers.
 
+## [0.2.2]
+
+- Pin traust-contracts v0.4.0, which extends the typed patch-evidence block to
+  the verification family. No ledger behaviour changes; the bump exists so
+  stage-8 producers downstream can emit the block at all.
+
+## [0.2.1]
+
+- Pin traust-contracts v0.3.0, which adds the optional `evidence[]` block to
+  remediation reports. No ledger behaviour changes; the bump is so producers
+  downstream can emit the block at all (the remediation schema is
+  `additionalProperties: false`, so an unpinned consumer rejects it).
+
+## [0.2.0]
+
+## Changes
+
+- The counterpart to patch_metadata for the event layer: backfills event
+  fingerprints (finding_ref -> fp) via attach_identity and re-signs in one
+  atomic Backend.mutate. Never overwrites an existing fingerprint (identity
+  is a historical observation); returns the count stamped. Lets the harness
+  stamp cross-scan identity onto events without writing the layer itself.
+
 ## [0.1.1]
 
 ## Changes
