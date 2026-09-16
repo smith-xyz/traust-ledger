@@ -2,6 +2,12 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.2.2]
+
+- Pin traust-contracts v0.4.0, which extends the typed patch-evidence block to
+  the verification family. No ledger behaviour changes; the bump exists so
+  stage-8 producers downstream can emit the block at all.
+
 ## [0.2.1]
 
 - Pin traust-contracts v0.3.0, which adds the optional `evidence[]` block to
