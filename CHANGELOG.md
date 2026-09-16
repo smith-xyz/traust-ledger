@@ -18,6 +18,13 @@ All notable changes to traust-ledger are documented here.
   and the new route both call `handlers.stamp_handler.stamp_event_identities`,
   matching the convergence pattern `sign_handler` already uses for CLI/REST/
   client. No behavior change for existing callers.
+## [0.2.3]
+
+- Point the traust-contracts pin at the new `traust-security` GitHub
+  organisation. A release is required rather than an in-place URL edit: uv
+  honours `[tool.uv.sources]` inside git dependencies, so a consumer pinning
+  `v0.2.2` inherits that tag's old-org URL and conflicts with its own. The
+  fix has to travel as a new tag, bottom-up.
 
 ## [0.2.2]
 

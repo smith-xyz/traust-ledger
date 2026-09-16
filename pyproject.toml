@@ -31,7 +31,7 @@ cli = ["httpx2"]
 ledger = "traust_ledger.cli.main:main"
 
 [tool.uv.sources]
-traust-contracts = { git = "https://github.com/openshift/traust-contracts.git", tag = "v0.4.0" }
+traust-contracts = { git = "https://github.com/traust-security/traust-contracts.git", tag = "v0.4.0" }
 
 
 [build-system]
