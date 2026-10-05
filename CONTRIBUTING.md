@@ -51,6 +51,16 @@ CI validates on MR. On merge to main, CI tags automatically.
 
 **Main:** tag if `VERSION` > latest git tag
 
+## Downstream pins
+
+Consumers pin this repo by commit sha (`[tool.uv.sources] rev = "<sha>"`), not
+a release tag — a tag needs this repo's own release cut first, a commit
+doesn't. After your change merges to main, bump the pin to the new commit in
+each direct downstream repo's `pyproject.toml`, `uv lock`, and run that
+repo's own tests before opening its PR.
+
+Direct downstream: `traust-engine`, `traust`.
+
 ## Running tests
 
 ```bash
