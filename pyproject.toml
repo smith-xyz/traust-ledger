@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     # 0.1.1 is the floor: LayerEvent timestamps are IsoTimestamp there, which is
     # what lets the read paths here drop their own parse guards.
-    "traust-contracts>=0.47.0",
+    "traust-contracts",
     "jsonschema>=4.0",
     # Authentication is on the path of every write (LedgerClient -> Authenticator
     # -> verifier), so the JWT library is not optional. It sat in the `cli` and
@@ -39,7 +39,7 @@ cli = ["httpx2"]
 ledger = "traust_ledger.cli.main:main"
 
 [tool.uv.sources]
-traust-contracts = { git = "https://github.com/traust-security/traust-contracts.git", tag = "v0.48.1" }
+traust-contracts = { git = "https://github.com/smith-xyz/traust-contracts.git", rev = "104519fd18f724e121c492c160e3dc2d67408f90" }
 
 [build-system]
 requires = ["hatchling"]
