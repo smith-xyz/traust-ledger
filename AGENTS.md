@@ -7,6 +7,10 @@ Python 3.11+ library (`traust_ledger`). Disposition-ledger kernel — small, rev
 - **Commits:** conventional `type(scope): subject` (`feat`, `fix`, `perf`, `chore`, `ci`, …)
 - **Releases:** `feat`/`fix`/`perf`/breaking MRs need `make check-release`, `VERSION` + `CHANGELOG.md` bump
 - **Scope:** smallest diff; identity/event math changes may need golden-vector updates in contracts
+- **Downstream pin:** `traust-engine` and `traust` each carry a direct
+  `[tool.uv.sources]` pin on this repo (`rev = "<sha>"`, not a tag). After
+  merging here, bump the pin to the new commit in both (engine first, then
+  traust), `uv lock`, and run each repo's own tests before opening its PR.
 - **Setup:** `make setup` once per clone (hooks). More: [CONTRIBUTING.md](CONTRIBUTING.md), [README.md](README.md)
 
 ## Two-tier public surface

@@ -89,16 +89,23 @@ rather than letting that surface later as misattribution.
 
 See [`docs/service-identity.md`](docs/service-identity.md) for full provider docs.
 
-Consumers pin both:
+Consumers pin by commit, not release tag — a tag needs a release cut first,
+a `rev` doesn't, which is what lets the dependency chain (contracts to ledger
+to engine to downstream) propagate PR-to-PR instead of waiting on a tag at
+every hop:
 
 ```toml
 [project]
-dependencies = ["traust-ledger>=0.7.0", "traust-contracts>=0.37.0"]
+dependencies = ["traust-ledger", "traust-contracts"]
 
 [tool.uv.sources]
-traust-ledger = { git = "ssh://git@<your-forge>/<namespace>/traust-ledger.git", tag = "v0.7.0" }
-traust-contracts = { git = "https://github.com/traust-security/traust-contracts.git", tag = "v0.37.0" }
+traust-ledger = { git = "ssh://git@<your-forge>/<namespace>/traust-ledger.git", rev = "<commit-sha>" }
+traust-contracts = { git = "https://github.com/traust-security/traust-contracts.git", rev = "<commit-sha>" }
 ```
+
+Note `dependencies` carries the bare name, no `>=` floor — the `rev` above is
+the floor now, and a duplicated semver constraint is a second number that can
+drift out of sync with it.
 
 Authoritative pins are in `pyproject.toml`; if the above disagrees, `pyproject.toml` wins.
 Local mono-checkout: point `[tool.uv.sources]` at a sibling path.
