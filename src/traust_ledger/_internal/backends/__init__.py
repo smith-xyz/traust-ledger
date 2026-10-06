@@ -24,7 +24,7 @@ class Backend(Protocol):
         """Load a layer from storage."""
         ...
 
-    def initialize(self, path: Path, data: dict) -> None:
+    def initialize(self, path: Path, data: dict, product_repo_id: str | None = None) -> None:
         """Create a complete layer without replacing an existing one."""
         ...
 
@@ -40,6 +40,14 @@ class Backend(Protocol):
         """Return all stored layer IDs."""
         ...
 
+    def list_layer_refs(self, product_repo_id: str | None = None) -> list[tuple[str, str | None]]:
+        """Return (layer_id, product_repo_id) pairs, optionally for one product_repo."""
+        ...
+
+    def product_repo_id(self, layer_id: str) -> str | None:
+        """Return the product_repo a layer belongs to, if recorded."""
+        ...
+
 
 def create_backend(backend_type: str = BACKEND_TYPE_FILE, **kwargs: object) -> Backend:
     """Create a storage backend by type name."""
@@ -49,7 +57,10 @@ def create_backend(backend_type: str = BACKEND_TYPE_FILE, **kwargs: object) -> B
     if backend_type == BACKEND_TYPE_DB:
         from sqlalchemy import create_engine, event
 
-        from traust_ledger._internal.migrations import ensure_current
+        from traust_ledger._internal.migrations import (
+            enable_sqlite_foreign_keys,
+            ensure_current,
+        )
 
         from .db import DbBackend
 
@@ -66,6 +77,7 @@ def create_backend(backend_type: str = BACKEND_TYPE_FILE, **kwargs: object) -> B
                 cursor.execute("PRAGMA busy_timeout=5000")
                 cursor.close()
 
+        enable_sqlite_foreign_keys(engine)
         ensure_current(engine)
         return DbBackend(engine)
     raise ValueError(UNKNOWN_BACKEND_MSG.format(backend_type=backend_type))

@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from storage_db import owner_of, prepare_storage
 from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.backends.file import FileBackend
@@ -126,6 +127,7 @@ def _seed(
     backend.initialize(
         layer_file_path(str(tmp_path), LAYER_ID),
         {"metadata": metadata, "events": [], "needs_review": []},
+        owner_of(backend),
     )
     config = ServiceConfig(data_dir=str(tmp_path), admin_identities=[ADMIN])
     return LedgerWriter(backend=backend), config
@@ -474,10 +476,11 @@ class TestVerification:
 
         layer = self._corrected_layer(tmp_path)
         engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}")
+        prepare_storage(engine)
         DbBackend.create_tables(engine)
         backend = DbBackend(engine)
         path = Path(f"{LAYER_ID}.json")
-        backend.initialize(path, {**layer, "events": []})
+        backend.initialize(path, {**layer, "events": []}, owner_of(backend))
         backend.store(path, layer)
 
         stripped = {**layer, "events": []}

@@ -30,6 +30,7 @@ class SourceLayer:
     document: dict
     source: str
     error: str | None = None
+    product_repo_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,7 @@ def iter_directory_layers(directory: Path) -> Iterator[SourceLayer]:
 def iter_manifest_layers(directory: Path, manifest: Path) -> Iterator[SourceLayer]:
     """Read explicitly routed Ledger files without interpreting directory layout."""
     root = directory.resolve(strict=True)
-    selected: list[tuple[str, Path, str]] = []
+    selected: list[tuple[str, Path, str, str | None]] = []
     identities: set[str] = set()
     paths: set[str] = set()
     with manifest.open(encoding="utf-8") as stream:
@@ -114,6 +115,7 @@ def iter_manifest_layers(directory: Path, manifest: Path) -> Iterator[SourceLaye
             relative = record.get("source_file")
             layer_id = record.get("layer_id")
             digest = record.get("source_digest")
+            product_repo_id = record.get("product_repo_id")
             if (
                 record.get("format_version") != 1
                 or record.get("artifact") != "layer"
@@ -128,16 +130,20 @@ def iter_manifest_layers(directory: Path, manifest: Path) -> Iterator[SourceLaye
                 or not isinstance(digest, str)
                 or len(digest) != 64
                 or any(char not in "0123456789abcdef" for char in digest)
+                or (
+                    product_repo_id is not None
+                    and (not isinstance(product_repo_id, str) or not product_repo_id.strip())
+                )
             ):
                 raise ValueError(f"Invalid Ledger selection at manifest line {line_number}")
             if layer_id in identities or relative in paths:
                 raise ValueError(f"Duplicate Ledger selection at manifest line {line_number}")
             identities.add(layer_id)
             paths.add(relative)
-            selected.append((layer_id, root / relative, digest))
+            selected.append((layer_id, root / relative, digest, product_repo_id))
     if not selected:
         raise ValueError("No selected Ledger layers in manifest")
-    for layer_id, path, digest in selected:
+    for layer_id, path, digest, product_repo_id in selected:
         source = str(path)
         current = root
         for part in path.relative_to(root).parts:
@@ -158,7 +164,7 @@ def iter_manifest_layers(directory: Path, manifest: Path) -> Iterator[SourceLaye
             except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
                 yield SourceLayer(layer_id, {}, source, f"invalid layer document: {error}")
                 continue
-            yield SourceLayer(layer_id, document, source)
+            yield SourceLayer(layer_id, document, source, product_repo_id=product_repo_id)
 
 
 def iter_ledger_layers(engine: Engine) -> Iterator[SourceLayer]:
@@ -169,6 +175,7 @@ def iter_ledger_layers(engine: Engine) -> Iterator[SourceLayer]:
             layer_id=layer_id,
             document=backend.load_layer_id(layer_id),
             source=f"ledger:{layer_id}",
+            product_repo_id=backend.product_repo_id(layer_id),
         )
 
 
@@ -235,7 +242,12 @@ def migrate(
             continue
         try:
             validation_warnings = _validate(layer, signature_key)
-            status = backend.import_layer(layer.layer_id, layer.document, dry_run=dry_run)
+            status = backend.import_layer(
+                layer.layer_id,
+                layer.document,
+                product_repo_id=layer.product_repo_id,
+                dry_run=dry_run,
+            )
             yield MigrationResult(
                 layer_id=layer.layer_id,
                 status=status,

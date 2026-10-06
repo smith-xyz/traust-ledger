@@ -10,6 +10,7 @@ from traust_ledger._internal.backends.errors import LayerNotInitializedError
 from traust_ledger._internal.backends.validation import validate_layer
 from traust_ledger._internal.writer import LedgerWriter
 from traust_ledger.config import ServiceConfig
+from traust_ledger.constants.domain import PRODUCT_REPO_ID_PATTERN
 from traust_ledger.handlers.event_handler import submit_event
 from traust_ledger.handlers.events_handler import query_layer_events
 from traust_ledger.handlers.findings_handler import resolve_all_findings, resolve_findings
@@ -30,7 +31,9 @@ from traust_ledger.models import (
     FindingsResponse,
     FingerprintRequest,
     FingerprintResponse,
+    InitializeRequest,
     LayerListResponse,
+    LayerRef,
     ResolveResponse,
     RestatementRequest,
     RestatementResponse,
@@ -41,7 +44,7 @@ from traust_ledger.models import (
 )
 from traust_ledger.paths import layer_file_path
 from traust_ledger.service.auth import authorize_restatement, require_identity, resolve_actor
-from traust_ledger.service.errors import LayerNotFoundError
+from traust_ledger.service.errors import LayerNotFoundError, ProductRepoLayerNotFoundError
 from traust_ledger.service.models import ErrorDetail, HealthResponse, ResolveRequest
 from traust_ledger.service.route_constants import (
     ROUTE_EVENTS,
@@ -156,11 +159,18 @@ async def post_restatement(
 @router.post("/v1/ledger/layers/{layer_id}/initialize")
 async def post_initialize_layer(
     layer_id: str,
-    shell: dict,
+    body: InitializeRequest,
     request: Request,
     actor: Annotated[LayerActor, Depends(resolve_actor)],
 ) -> dict[str, str]:
-    return initialize_layer(layer_id, shell, actor, request.app.state.backend, _config(request))
+    return initialize_layer(
+        layer_id,
+        body.layer,
+        actor,
+        request.app.state.backend,
+        _config(request),
+        body.product_repo_id,
+    )
 
 
 @router.get(
@@ -322,11 +332,21 @@ async def post_fingerprint(body: FingerprintRequest) -> FingerprintResponse:
     dependencies=[Depends(require_identity)],
     responses={
         401: {"model": ErrorDetail, "description": "Missing or invalid authentication credentials"},
+        404: {"model": ErrorDetail, "description": "No layer belongs to the product_repo"},
     },
 )
-async def list_layers(request: Request) -> LayerListResponse:
-    layers = request.app.state.backend.list_layer_ids()
-    return LayerListResponse(layers=layers)
+async def list_layers(
+    request: Request,
+    product_repo_id: str | None = Query(
+        None, pattern=PRODUCT_REPO_ID_PATTERN, description="Only the layer of this product_repo"
+    ),
+) -> LayerListResponse:
+    refs = request.app.state.backend.list_layer_refs(product_repo_id)
+    if product_repo_id is not None and not refs:
+        raise ProductRepoLayerNotFoundError(product_repo_id=product_repo_id)
+    return LayerListResponse(
+        layers=[LayerRef(layer_id=layer_id, product_repo_id=owner) for layer_id, owner in refs]
+    )
 
 
 @router.post(

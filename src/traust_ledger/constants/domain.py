@@ -45,6 +45,9 @@ ALLOWED_DECISIONS = frozenset(
 # use `pathlib.rglob` or `os.walk`, or it will under-count without saying so.
 LAYER_ID_PATTERN = r"^(?!\.\.)(?!.*\.\.)\.?[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
 
+# Storage assigns product_repo ids as str(uuid.uuid4()).
+PRODUCT_REPO_ID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+
 __all__ = [
     "ACTOR_KIND_HUMAN",
     "ACTOR_KIND_MACHINE",
@@ -53,6 +56,7 @@ __all__ = [
     "DECISION_KEEP_OPEN",
     "DECISION_OVERRIDE_FALSE_POSITIVE",
     "LAYER_ID_PATTERN",
+    "PRODUCT_REPO_ID_PATTERN",
     "RATIONALE_MIN_LENGTH",
     "STATUS_ACCEPTED",
     "TIMESTAMP_FUTURE_LIMIT_HOURS",

@@ -10,10 +10,10 @@ from typing import TypeVar
 from sqlalchemy import insert, select, text, update
 from sqlalchemy.engine import Connection, Engine
 
-from traust_ledger._internal.migrations import ledger_tables, upgrade
+from traust_ledger._internal.migrations import enable_sqlite_foreign_keys, ledger_tables, upgrade
 
 from .constants import EMPTY_LAYER
-from .errors import LayerConflictError, LayerNotInitializedError
+from .errors import LayerConflictError, LayerNotInitializedError, LayerStorageError
 from .records import LayerRecord, StoredLayerRecord
 from .validation import validate_layer
 
@@ -28,6 +28,7 @@ class DbBackend:
     """Normalized layer storage with ordered events and atomic reconstruction."""
 
     def __init__(self, engine: Engine) -> None:
+        enable_sqlite_foreign_keys(engine)
         self._engine = engine
         self._tables = ledger_tables(engine.dialect.name)
 
@@ -39,6 +40,14 @@ class DbBackend:
         with self._engine.connect() as conn:
             rows = conn.execute(select(self._tables.layers.c.layer_id)).scalars().all()
         return sorted(rows)
+
+    def list_layer_refs(self, product_repo_id: str | None = None) -> list[tuple[str, str | None]]:
+        layers = self._tables.layers
+        statement = select(layers.c.layer_id, layers.c.product_repo_id).order_by(layers.c.layer_id)
+        if product_repo_id is not None:
+            statement = statement.where(layers.c.product_repo_id == product_repo_id)
+        with self._engine.connect() as conn:
+            return [(row.layer_id, row.product_repo_id) for row in conn.execute(statement)]
 
     def has_layer(self, layer_id: str) -> bool:
         with self._engine.connect() as conn:
@@ -60,6 +69,11 @@ class DbBackend:
         layer_id = _layer_id(path)
         with self._engine.begin() as conn:
             self._lock_layer(conn, layer_id)
+            if not self._has_layer(conn, layer_id):
+                raise LayerNotInitializedError(
+                    f"layer {layer_id!r} is not initialized; create it with initialize "
+                    "(and its product_repo_id) first"
+                )
             self._persist(conn, layer_id, LayerRecord.from_document(data))
 
     def mutate(self, path: Path, mutator: Callable[[dict], T]) -> T:
@@ -76,8 +90,16 @@ class DbBackend:
             self._persist(conn, layer_id, LayerRecord.from_document(data))
             return result
 
-    def import_layer(self, layer_id: str, data: dict, *, dry_run: bool = False) -> str:
+    def import_layer(
+        self,
+        layer_id: str,
+        data: dict,
+        *,
+        product_repo_id: str | None = None,
+        dry_run: bool = False,
+    ) -> str:
         """Insert immutable history, accepting only exact idempotent migrations."""
+        _require_product_repo(product_repo_id)
         validate_layer(data)
         record = LayerRecord.from_document(data)
         with self._engine.begin() as conn:
@@ -86,25 +108,41 @@ class DbBackend:
             if existing is not None:
                 if existing != data:
                     raise LayerConflictError(f"layer {layer_id!r} already contains different data")
+                if self._product_repo(conn, layer_id) != product_repo_id:
+                    raise LayerConflictError(
+                        f"layer {layer_id!r} belongs to a different product_repo"
+                    )
                 return "skipped"
             if dry_run:
                 return "would_insert"
-            self._persist(conn, layer_id, record)
+            self._persist(conn, layer_id, record, product_repo_id=product_repo_id)
             reconstructed = self._load(conn, layer_id)
             if reconstructed != data:
                 raise RuntimeError(f"layer {layer_id!r} failed reconstruction verification")
             validate_layer(reconstructed)
             return "inserted"
 
-    def initialize(self, path: Path, data: dict) -> None:
+    def initialize(self, path: Path, data: dict, product_repo_id: str | None = None) -> None:
         """Create one complete layer atomically; never replace an existing layer."""
+        _require_product_repo(product_repo_id)
         validate_layer(data)
         layer_id = _layer_id(path)
         with self._engine.begin() as conn:
             self._lock_layer(conn, layer_id)
             if self._has_layer(conn, layer_id):
                 raise LayerConflictError(f"layer {layer_id!r} already exists")
-            self._persist(conn, layer_id, LayerRecord.from_document(data))
+            self._persist(
+                conn, layer_id, LayerRecord.from_document(data), product_repo_id=product_repo_id
+            )
+
+    def product_repo_id(self, layer_id: str) -> str | None:
+        with self._engine.connect() as conn:
+            return self._product_repo(conn, layer_id)
+
+    def _product_repo(self, conn: Connection, layer_id: str) -> str | None:
+        layers = self._tables.layers
+        statement = select(layers.c.product_repo_id).where(layers.c.layer_id == layer_id)
+        return conn.execute(statement).scalar_one_or_none()
 
     @staticmethod
     def _lock_layer(conn: Connection, layer_id: str) -> None:
@@ -154,7 +192,14 @@ class DbBackend:
         )
         return list(conn.execute(statement).scalars())
 
-    def _persist(self, conn: Connection, layer_id: str, record: LayerRecord) -> None:
+    def _persist(
+        self,
+        conn: Connection,
+        layer_id: str,
+        record: LayerRecord,
+        *,
+        product_repo_id: str | None = None,
+    ) -> None:
         stored_payloads = [bytes(payload) for payload in self._event_payloads(conn, layer_id)]
         append_offset = record.append_offset(layer_id, stored_payloads)
         values = record.layer_values()
@@ -165,12 +210,22 @@ class DbBackend:
                 .values(**values)
             )
         else:
-            statement = insert(self._tables.layers).values(layer_id=layer_id, **values)
+            statement = insert(self._tables.layers).values(
+                layer_id=layer_id, product_repo_id=product_repo_id, **values
+            )
         conn.execute(statement)
 
         event_values = record.new_event_values(layer_id, append_offset)
         if event_values:
             conn.execute(insert(self._tables.events), event_values)
+
+
+def _require_product_repo(product_repo_id: str | None) -> None:
+    if not isinstance(product_repo_id, str) or not product_repo_id.strip():
+        raise LayerStorageError(
+            "product_repo_id is required for database-backed layers "
+            "(the storage product_repo the layer belongs to)"
+        )
 
 
 __all__ = ["DbBackend", "LayerConflictError"]

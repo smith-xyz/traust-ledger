@@ -25,7 +25,9 @@ def cmd_initialize(args: argparse.Namespace) -> int:
         if not isinstance(shell, dict):
             raise ValueError("layer shell must be a JSON object")
         writer, config = local_writer()
-        result = initialize_layer(args.layer, shell, actor, writer.backend, config)
+        result = initialize_layer(
+            args.layer, shell, actor, writer.backend, config, args.product_repo_id
+        )
     except (OSError, ValueError, ServiceError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

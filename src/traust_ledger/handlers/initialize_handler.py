@@ -13,7 +13,12 @@ from traust_ledger.paths import layer_file_path
 
 
 def initialize_layer(
-    layer_id: str, shell: dict, actor: LayerActor, backend: Backend, config: ServiceConfig
+    layer_id: str,
+    shell: dict,
+    actor: LayerActor,
+    backend: Backend,
+    config: ServiceConfig,
+    product_repo_id: str | None = None,
 ) -> dict[str, str]:
     """Create once; actor is verified at each transport boundary, never embedded in metadata."""
     del actor  # Authentication is mandatory; do not invent metadata.
@@ -24,7 +29,7 @@ def initialize_layer(
                 detail="initialization requires empty events and needs_review; "
                 "use administrative migration for historical evidence"
             )
-        backend.initialize(layer_file_path(config.data_dir, layer_id), shell)
+        backend.initialize(layer_file_path(config.data_dir, layer_id), shell, product_repo_id)
     except (LayerStorageError, ValueError) as exc:
         raise ValidationError(detail=str(exc)) from exc
     return {"layer_id": layer_id}

@@ -18,6 +18,7 @@ import yaml
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
+from storage_db import owner_of, prepare_storage
 
 from traust_ledger._internal.backends.constants import (
     EVENTS_TABLE_NAME,
@@ -392,6 +393,7 @@ def _layer_with_event_ids(*event_ids: str) -> dict:
 
 def _memory_db_engine() -> Engine:
     engine = create_engine(SQLITE_MEMORY_URL)
+    prepare_storage(engine)
     DbBackend.create_tables(engine)
     return engine
 
@@ -603,7 +605,7 @@ def test_authoritative_history_uses_suffix_only_appends() -> None:
     statements = _attach_sql_capture(engine)
     backend = DbBackend(engine)
     original = _layer_with_event_ids(EVENT_ID_ALPHA, EVENT_ID_BETA)
-    backend.store(TEST_LAYER_PATH, original)
+    backend.import_layer(TEST_LAYER_PATH.stem, original, product_repo_id=owner_of(backend))
 
     with pytest.raises(LayerConflictError, match="cannot remove"):
         backend.store(TEST_LAYER_PATH, _layer_with_event_ids(EVENT_ID_ALPHA))
@@ -635,9 +637,14 @@ def test_no_sci_api_write_path(tmp_path: Path) -> None:
     """sci-api DB role must be unable to INSERT into event tables."""
     db_path = tmp_path / DB_FILENAME
     writer_engine = create_engine(SQLITE_FILE_URI_TEMPLATE.format(path=db_path))
+    prepare_storage(writer_engine)
     DbBackend.create_tables(writer_engine)
     writer = DbBackend(writer_engine)
-    writer.store(TEST_LAYER_PATH, _layer_with_event_ids(EVENT_ID_ALPHA))
+    writer.import_layer(
+        TEST_LAYER_PATH.stem,
+        _layer_with_event_ids(EVENT_ID_ALPHA),
+        product_repo_id=owner_of(writer),
+    )
 
     reader_engine = create_engine(SQLITE_READ_ONLY_URI_TEMPLATE.format(path=db_path))
     reader = DbBackend(reader_engine)

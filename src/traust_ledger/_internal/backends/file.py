@@ -34,6 +34,15 @@ class FileBackend:
     def __init__(self, data_dir: str | Path | None = None) -> None:
         self._data_dir = Path(data_dir) if data_dir else None
 
+    def list_layer_refs(self, product_repo_id: str | None = None) -> list[tuple[str, str | None]]:
+        if product_repo_id is not None:
+            return []
+        return [(layer_id, None) for layer_id in self.list_layer_ids()]
+
+    def product_repo_id(self, layer_id: str) -> str | None:
+        del layer_id
+        return None
+
     def list_layer_ids(self) -> list[str]:
         """Return all stored layer IDs in the data directory.
 
@@ -80,8 +89,9 @@ class FileBackend:
         with self._file_lock(resolved):
             return self._load_unlocked(resolved)
 
-    def initialize(self, path: Path, data: dict) -> None:
+    def initialize(self, path: Path, data: dict, product_repo_id: str | None = None) -> None:
         """Create a schema-valid shell without replacing an existing file."""
+        del product_repo_id
         validate_layer(data)
         resolved = Path(path)
         with self._file_lock(resolved):

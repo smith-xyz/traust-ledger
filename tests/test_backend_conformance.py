@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from conftest import canonical_shell
 from sqlalchemy import create_engine
+from storage_db import prepare_storage
 
 from traust_ledger._internal.backends import Backend, create_backend
 from traust_ledger._internal.backends.constants import (
@@ -55,9 +56,18 @@ def backend(request: pytest.FixtureRequest) -> Backend:
     """Yield a Backend instance for each registered backend type."""
     if request.param == BACKEND_PARAM_DB:
         engine = create_engine("sqlite:///:memory:")
+        prepare_storage(engine)
         DbBackend.create_tables(engine)
         return DbBackend(engine)
     return create_backend(str(request.param))
+
+
+def _seed(backend: Backend, layer_path: Path, layer: dict) -> None:
+    if isinstance(backend, DbBackend):
+        owner = prepare_storage(backend._engine, repo_url=f"https://example.test/{layer_path.stem}")
+        backend.initialize(layer_path, layer, owner)
+    else:
+        backend.store(layer_path, layer)
 
 
 def _sample_append_event() -> dict:
@@ -82,7 +92,7 @@ def test_atomic_append(backend: Backend, tmp_path: Path) -> None:
     """Stored layer content matches what was written."""
     layer_path = tmp_path / "layer.json"
     layer = _layer_with_events({**_sample_append_event(), "event_id": SAMPLE_EVENT_ID})
-    backend.store(layer_path, layer)
+    _seed(backend, layer_path, layer)
     loaded = backend.load(layer_path)
     assert loaded == layer
 
@@ -92,7 +102,7 @@ def test_idempotent_reappend(backend: Backend, tmp_path: Path) -> None:
     layer_path = tmp_path / "layer.json"
     writer = LedgerWriter(backend=backend)
     event = _sample_append_event()
-    backend.initialize(layer_path, canonical_shell())
+    _seed(backend, layer_path, canonical_shell())
     first_id = writer.append_event(layer_path, event.copy())
     second_id = writer.append_event(layer_path, event.copy())
     assert first_id == second_id
@@ -105,7 +115,7 @@ def test_mutated_events_fail_verify(backend: Backend, tmp_path: Path) -> None:
     layer_path = tmp_path / "layer.json"
     layer = _layer_with_events(_merkle_event())
     stamp_merkle_metadata(layer)
-    backend.store(layer_path, layer)
+    _seed(backend, layer_path, layer)
     tampered = backend.load(layer_path)
     tampered[LAYER_EVENTS_KEY][0]["disposition"] = TAMPERED_DISPOSITION
     findings = verify_merkle_integrity(tampered)
@@ -130,7 +140,7 @@ def test_store_is_atomic(
 
     layer_path = tmp_path / "layer.json"
     original = _layer_with_events({"event_id": ORIGINAL_STORED_EVENT_ID})
-    backend.store(layer_path, original)
+    _seed(backend, layer_path, original)
     original_bytes = layer_path.read_bytes()
 
     def failing_dump(*_args: object, **_kwargs: object) -> None:
@@ -151,7 +161,7 @@ def test_round_trip_fidelity(backend: Backend, tmp_path: Path) -> None:
         LAYER_EVENTS_KEY: [_merkle_event()],
         "baseline_claims": {"F-1": "a" * 64},
     }
-    backend.store(layer_path, payload)
+    _seed(backend, layer_path, payload)
     if isinstance(backend, FileBackend):
         first_bytes = layer_path.read_bytes()
         reloaded = backend.load(layer_path)
@@ -181,16 +191,18 @@ def test_iter_layers_supports_file_and_database_identity_spaces(tmp_path):
     layer = canonical_shell()
 
     engine = create_engine("sqlite://")
+    prepare_storage(engine)
     DbBackend.create_tables(engine)
     for backend in (FileBackend(data_dir), DbBackend(engine)):
-        backend.store(layer_file_path(str(data_dir), "repo-a"), layer)
+        _seed(backend, Path(layer_file_path(str(data_dir), "repo-a")), layer)
         assert backend.list_layer_ids() == ["repo-a"], type(backend).__name__
         for layer_id, _ in iter_layers(backend, str(data_dir)):
             layer_file_path(str(data_dir), layer_id)  # file-compatible ID must not raise
 
     opaque_id = "corpus:layer:org/repo__main/repo__main"
     db_backend = DbBackend(engine)
-    db_backend.import_layer(opaque_id, layer)
+    owner = prepare_storage(engine, repo_url="https://example.test/opaque")
+    db_backend.import_layer(opaque_id, layer, product_repo_id=owner)
     assert list(iter_layers(db_backend, str(data_dir))) == [(opaque_id, layer), ("repo-a", layer)]
 
 
@@ -201,7 +213,7 @@ def test_mutate_applies_callback_and_stores(backend: Backend, tmp_path: Path) ->
     """mutate: callback's mutation is persisted."""
     layer_path = tmp_path / "layer.json"
     base = canonical_shell()
-    backend.store(layer_path, base)
+    _seed(backend, layer_path, base)
 
     def _add_note(layer: dict) -> str:
         layer.setdefault("metadata", {})["audit_report_sha256"] = "a" * 64
@@ -217,7 +229,7 @@ def test_mutate_with_stamp_and_sign(backend: Backend, tmp_path: Path) -> None:
     """mutate: finalization (stamp + sign) inside the callback persists."""
     layer_path = tmp_path / "layer.json"
     layer = _layer_with_events(_merkle_event())
-    backend.store(layer_path, layer)
+    _seed(backend, layer_path, layer)
 
     def _stamp(data: dict) -> None:
         stamp_merkle_metadata(data)
@@ -233,7 +245,7 @@ def test_mutate_rollback_on_error(backend: Backend, tmp_path: Path) -> None:
     """mutate: if the callback raises, nothing is stored."""
     layer_path = tmp_path / "layer.json"
     original = _layer_with_events(_merkle_event())
-    backend.store(layer_path, original)
+    _seed(backend, layer_path, original)
 
     def _boom(layer: dict) -> None:
         layer["metadata"]["poisoned"] = True
@@ -256,7 +268,7 @@ def test_mutate_finalize_signing_required_raises(backend: Backend, tmp_path: Pat
 
     layer_path = tmp_path / "layer.json"
     layer = _layer_with_events(_merkle_event())
-    backend.store(layer_path, layer)
+    _seed(backend, layer_path, layer)
 
     config = ServiceConfig(signing_required=True, signing_method="none")
 

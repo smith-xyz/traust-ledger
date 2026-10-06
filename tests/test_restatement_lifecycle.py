@@ -24,6 +24,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from storage_db import owner_of, prepare_storage
 from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.backends import create_backend
@@ -62,7 +63,7 @@ class Harness:
         self.path = layer_file_path(str(data_dir), layer_id)
         self.layer_id = layer_id
         self.config = ServiceConfig(data_dir=str(data_dir), admin_identities=[FIXTURE["admin"]])
-        backend.initialize(self.path, json.loads(json.dumps(FIXTURE["shell"])))
+        backend.initialize(self.path, json.loads(json.dumps(FIXTURE["shell"])), owner_of(backend))
 
     def load(self) -> dict:
         return self.backend.load(self.path)
@@ -249,6 +250,8 @@ def _walk(harness: Harness) -> None:
 @pytest.mark.parametrize("backend_type", [BACKEND_TYPE_FILE, BACKEND_TYPE_DB])
 def test_restatement_lifecycle(backend_type: str, tmp_path: Path) -> None:
     data_dir = tmp_path / "layers"
+    if backend_type == BACKEND_TYPE_DB:
+        prepare_storage(f"sqlite:///{tmp_path / 'ledger.db'}")
     backend = create_backend(
         backend_type,
         data_dir=data_dir,
@@ -262,6 +265,7 @@ def test_restatement_lifecycle_postgresql(tmp_path: Path) -> None:
     url = os.environ.get("LEDGER_TEST_DATABASE_URL")
     if not url:
         pytest.skip("LEDGER_TEST_DATABASE_URL is not configured")
+    prepare_storage(url)
     _walk(
         Harness(
             create_backend(BACKEND_TYPE_DB, database_url=url),

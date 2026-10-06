@@ -13,6 +13,7 @@ import pytest
 from conftest import TEST_ISSUER, auth_header
 from fastapi.testclient import TestClient
 from pytest_httpserver import HTTPServer
+from storage_db import owner_of, storage_for
 
 from traust_ledger._internal.backends.constants import BACKEND_TYPE_DB
 from traust_ledger._internal.integrity import (
@@ -87,10 +88,13 @@ def signed_client(
         oidc_issuer=TEST_ISSUER,
         oidc_jwks_url=jwks_url,
     )
+    storage_for(config)
     app = create_app(config)
     from conftest import canonical_shell
 
-    app.state.backend.initialize(tmp_path / f"{LAYER}.json", canonical_shell())
+    app.state.backend.initialize(
+        tmp_path / f"{LAYER}.json", canonical_shell(), owner_of(app.state.backend)
+    )
     headers = auth_header(rsa_keypair, identity="alice@e2e.test")
     yield TestClient(app), tmp_path, headers
 

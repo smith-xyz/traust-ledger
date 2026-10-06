@@ -21,6 +21,7 @@ import jwt as pyjwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from pytest_httpserver import HTTPServer
+from storage_db import owner_of, storage_for
 from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger.auth.claims import IdentityClaimsError, TokenVerificationError, claims_to_actor
@@ -645,8 +646,11 @@ class TestMockOIDCE2EREST:
         from conftest import canonical_shell
         from fastapi.testclient import TestClient
 
+        storage_for(config)
         app = create_app(config)
-        app.state.backend.initialize(tmp_path / f"{LAYER_ID}.json", canonical_shell())
+        app.state.backend.initialize(
+            tmp_path / f"{LAYER_ID}.json", canonical_shell(), owner_of(app.state.backend)
+        )
         return TestClient(app)
 
     def test_human_jwt_through_delegating_adapter(self, rest_client, rsa_keypair):

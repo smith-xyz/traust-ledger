@@ -10,6 +10,7 @@ from unittest import mock
 import pytest
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import DatabaseError
+from storage_db import copy_registry, prepare_storage
 from traust_contracts.v1.ledger import CONTRACT_VERSION, REVISION, TABLE_ORDER
 
 from traust_ledger._internal.backends.db import DbBackend
@@ -62,7 +63,8 @@ def _layer(rationale: str = "reviewed against implementation") -> dict:
 
 def test_migration_is_idempotent_and_preserves_null_character(tmp_path: Path) -> None:
     target = f"sqlite:///{tmp_path / 'ledger.db'}"
-    source = SourceLayer("layer-a", _layer("contains \x00 byte"), "fixture")
+    owner = prepare_storage(target)
+    source = SourceLayer("layer-a", _layer("contains \x00 byte"), "fixture", product_repo_id=owner)
 
     first = list(migrate(iter([source]), target))
     second = list(migrate(iter([source]), target))
@@ -80,7 +82,7 @@ def test_migration_reports_unverified_signature_warning(tmp_path: Path) -> None:
     document = _layer()
     stamp_merkle_metadata(document)
     document["metadata"]["merkle_root_signature"] = "unverified-signature"
-    source = SourceLayer("layer-a", document, "fixture")
+    source = SourceLayer("layer-a", document, "fixture", product_repo_id=prepare_storage(target))
 
     result = next(migrate(iter([source]), target))
 
@@ -90,6 +92,7 @@ def test_migration_reports_unverified_signature_warning(tmp_path: Path) -> None:
 
 def test_layer_signature_state_is_queryable(tmp_path: Path) -> None:
     target = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}")
+    owner = prepare_storage(target)
     DbBackend.create_tables(target)
     backend = DbBackend(target)
     document = _layer()
@@ -103,7 +106,7 @@ def test_layer_signature_state_is_queryable(tmp_path: Path) -> None:
             "merkle_signature_format": 4,
         }
     )
-    backend.import_layer("layer-a", document)
+    backend.import_layer("layer-a", document, product_repo_id=owner)
 
     with target.connect() as conn:
         row = conn.execute(
@@ -125,8 +128,11 @@ def test_layer_signature_state_is_queryable(tmp_path: Path) -> None:
 
 def test_migration_reports_conflict_without_overwrite(tmp_path: Path) -> None:
     target = f"sqlite:///{tmp_path / 'ledger.db'}"
-    original = SourceLayer("layer-a", _layer(), "first")
-    changed = SourceLayer("layer-a", _layer("different rationale content"), "second")
+    owner = prepare_storage(target)
+    original = SourceLayer("layer-a", _layer(), "first", product_repo_id=owner)
+    changed = SourceLayer(
+        "layer-a", _layer("different rationale content"), "second", product_repo_id=owner
+    )
 
     assert next(migrate(iter([original]), target)).status == "inserted"
     result = next(migrate(iter([changed]), target))
@@ -181,13 +187,15 @@ def test_directory_migration_quarantines_bad_json_and_continues(tmp_path: Path) 
     (source_dir / "bad.json").write_text("{not json", encoding="utf-8")
     (source_dir / "good.json").write_text(json.dumps(_layer()), encoding="utf-8")
     target_url = f"sqlite:///{tmp_path / 'target.db'}"
+    prepare_storage(target_url)
 
     results = list(migrate(iter_directory_layers(source_dir), target_url))
 
     assert [(result.layer_id, result.status) for result in results] == [
         ("bad", "quarantined"),
-        ("good", "inserted"),
+        ("good", "quarantined"),
     ]
+    assert "product_repo_id is required" in (results[1].detail or "")
 
 
 def test_manifest_migrates_nested_layers_with_distinct_ids(tmp_path: Path) -> None:
@@ -209,9 +217,11 @@ def test_manifest_migrates_nested_layers_with_distinct_ids(tmp_path: Path) -> No
                 "layer_id": f"corpus:layer:{team}/repo",
             }
         )
+    target = f"sqlite:///{tmp_path / 'ledger.db'}"
+    for team, record in zip(("a", "b"), records, strict=True):
+        record["product_repo_id"] = prepare_storage(target, product=team)
     manifest = tmp_path / "decisions.jsonl"
     manifest.write_text("".join(json.dumps(row) + "\n" for row in records))
-    target = f"sqlite:///{tmp_path / 'ledger.db'}"
     results = list(migrate(iter_manifest_layers(root, manifest), target))
     assert [(row.layer_id, row.status) for row in results] == [
         ("corpus:layer:a/repo", "inserted"),
@@ -237,6 +247,7 @@ def test_cli_manifest_source_uses_ledger_loader(
     source = root / "repo-findings-layer.json"
     payload = json.dumps(_layer()).encode()
     source.write_bytes(payload)
+    target = f"sqlite:///{tmp_path / 'ledger.db'}"
     manifest = tmp_path / "selection.jsonl"
     manifest.write_text(
         json.dumps(
@@ -248,11 +259,11 @@ def test_cli_manifest_source_uses_ledger_loader(
                 "decision": "selected",
                 "artifact": "layer",
                 "layer_id": "corpus:layer:repo",
+                "product_repo_id": prepare_storage(target),
             }
         )
         + "\n"
     )
-    target = f"sqlite:///{tmp_path / 'ledger.db'}"
     assert (
         ledger_main(
             [
@@ -322,19 +333,24 @@ def test_normalized_database_can_migrate_to_another_database(tmp_path: Path) -> 
     source_url = f"sqlite:///{tmp_path / 'source-ledger.db'}"
     target_url = f"sqlite:///{tmp_path / 'target-ledger.db'}"
     source_engine = create_engine(source_url)
+    owner = prepare_storage(source_url)
     DbBackend.create_tables(source_engine)
-    DbBackend(source_engine).import_layer("layer-a", _layer())
+    DbBackend(source_engine).import_layer("layer-a", _layer(), product_repo_id=owner)
+    copy_registry(source_url, target_url)
 
     result = next(migrate(iter_ledger_layers(source_engine), target_url))
 
     assert result.status == "inserted"
-    assert DbBackend(create_engine(target_url)).load(Path("layer-a")) == _layer()
+    target = DbBackend(create_engine(target_url))
+    assert target.load(Path("layer-a")) == _layer()
+    assert target.product_repo_id("layer-a") == owner
 
 
 def test_sqlite_guards_reject_authoritative_mutation(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'guarded.db'}")
+    owner = prepare_storage(engine)
     DbBackend.create_tables(engine)
-    DbBackend(engine).import_layer("layer-a", _layer())
+    DbBackend(engine).import_layer("layer-a", _layer(), product_repo_id=owner)
 
     for statement in (
         "UPDATE events SET event_id = 'changed' WHERE layer_id = 'layer-a'",
@@ -351,6 +367,7 @@ def test_sqlite_guards_reject_authoritative_mutation(tmp_path: Path) -> None:
 
 def test_fresh_database_loads_pinned_contract_sql() -> None:
     engine = create_engine("sqlite:///:memory:")
+    prepare_storage(engine)
 
     with mock.patch.object(
         schema_migrations,
@@ -364,6 +381,7 @@ def test_fresh_database_loads_pinned_contract_sql() -> None:
 
 def test_revision_one_is_singleton_and_existing_mismatches_are_rejected() -> None:
     engine = create_engine("sqlite:///:memory:")
+    prepare_storage(engine)
     DbBackend.create_tables(engine)
     with engine.connect() as conn:
         assert conn.execute(
@@ -407,6 +425,7 @@ def test_database_roles_must_be_distinct() -> None:
 
 def test_normalized_schema_has_no_complete_layer_blob() -> None:
     engine = create_engine("sqlite:///:memory:")
+    prepare_storage(engine)
     DbBackend.create_tables(engine)
     inspector = inspect(engine)
 
@@ -424,3 +443,38 @@ def test_explicit_bindings_have_contract_table_inventory(dialect_name: str) -> N
     assert set(table.name for table in tables.metadata.tables.values()) == set(TABLE_ORDER)
     assert tables.revision.c.contract_version.name == "contract_version"
     assert tables.events.schema == (LEDGER_SCHEMA if dialect_name == "postgresql" else None)
+
+
+def test_bootstrap_requires_storage_first() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with pytest.raises(RuntimeError, match="initialize storage first"):
+        upgrade(engine)
+    assert "schema_revision" not in inspect(engine).get_table_names()
+
+
+def test_bootstrap_requires_current_storage_revision() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    prepare_storage(engine)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE traust_storage_meta SET revision = revision + 1"))
+    with pytest.raises(RuntimeError, match="requires traust storage"):
+        upgrade(engine)
+
+
+def test_import_requires_and_records_product_repo(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}")
+    owner = prepare_storage(engine)
+    other = prepare_storage(engine, repo_url="https://example.test/other")
+    DbBackend.create_tables(engine)
+    backend = DbBackend(engine)
+    with pytest.raises(ValueError, match="product_repo_id is required"):
+        backend.import_layer("layer-a", _layer())
+    with pytest.raises(DatabaseError, match="FOREIGN KEY"):
+        backend.import_layer("layer-a", _layer(), product_repo_id="unregistered")
+    assert backend.import_layer("layer-a", _layer(), product_repo_id=owner) == "inserted"
+    assert backend.product_repo_id("layer-a") == owner
+    assert backend.import_layer("layer-a", _layer(), product_repo_id=owner) == "skipped"
+    with pytest.raises(ValueError, match="different product_repo"):
+        backend.import_layer("layer-a", _layer(), product_repo_id=other)
+    with pytest.raises(DatabaseError, match="UNIQUE"):
+        backend.import_layer("layer-b", _layer(), product_repo_id=owner)
