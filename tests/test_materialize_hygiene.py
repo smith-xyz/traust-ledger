@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, select
+from storage_db import prepare_storage
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -83,6 +84,7 @@ def test_unparseable_json_is_skipped_not_raised(tmp_path):
 def test_zero_findings_leaves_existing_rows_alone():
     """An unreadable or skipped layer must not look like a deleted one."""
     engine = create_engine("sqlite://")
+    prepare_storage(engine)
     ensure_schema(engine)
     with engine.begin() as c:
         upsert_layer(c, "L1", [_row("L1", "FIND-001"), _row("L1", "FIND-002")])
@@ -95,6 +97,7 @@ def test_zero_findings_leaves_existing_rows_alone():
 
 def test_prune_empty_is_available_when_deletion_is_meant():
     engine = create_engine("sqlite://")
+    prepare_storage(engine)
     ensure_schema(engine)
     with engine.begin() as c:
         upsert_layer(c, "L1", [_row("L1", "FIND-001")])
@@ -107,6 +110,7 @@ def test_prune_empty_is_available_when_deletion_is_meant():
 def test_a_non_empty_run_still_prunes_stale_refs():
     """The case that keeps the projection honest after a re-baseline."""
     engine = create_engine("sqlite://")
+    prepare_storage(engine)
     ensure_schema(engine)
     with engine.begin() as c:
         upsert_layer(c, "L1", [_row("L1", "OLD-1"), _row("L1", "KEEP-1")])

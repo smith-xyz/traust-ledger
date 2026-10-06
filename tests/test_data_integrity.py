@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import DBAPIError
+from storage_db import owner_of, prepare_storage
 
 from traust_ledger._internal.backends.db import DbBackend
 from traust_ledger._internal.errors import EventIdMismatchError, IdentityUnverifiedError
@@ -30,6 +31,7 @@ class TestP18AtomicMutate:
 
     def test_mutate_layer_delegates_to_backend_mutate(self, tmp_path: Path) -> None:
         engine = create_engine("sqlite:///:memory:")
+        prepare_storage(engine)
         DbBackend.create_tables(engine)
         backend = DbBackend(engine)
         writer = LedgerWriter(backend=backend)
@@ -37,7 +39,7 @@ class TestP18AtomicMutate:
 
         from conftest import canonical_shell
 
-        backend.initialize(layer_path, canonical_shell())
+        backend.initialize(layer_path, canonical_shell(), owner_of(backend))
         backend.mutate = MagicMock(wraps=backend.mutate)  # type: ignore[method-assign]
         backend.load = MagicMock(wraps=backend.load)  # type: ignore[method-assign]
         backend.store = MagicMock(wraps=backend.store)  # type: ignore[method-assign]
@@ -62,13 +64,14 @@ def test_postgres_concurrent_mutate_preserves_both_appends() -> None:
     if not url:
         pytest.skip("LEDGER_TEST_DATABASE_URL is not configured")
     engine = create_engine(url)
+    prepare_storage(engine)
     DbBackend.create_tables(engine)
     backend = DbBackend(engine)
     layer_id = f"concurrency-{uuid.uuid4().hex}"
     layer_path = Path(layer_id)
     from conftest import canonical_shell
 
-    backend.initialize(layer_path, canonical_shell())
+    backend.initialize(layer_path, canonical_shell(), owner_of(backend))
     barrier = Barrier(2)
 
     def append(event_id: str) -> None:
@@ -106,6 +109,7 @@ def test_postgres_guards_and_role_matrix() -> None:
     if not url:
         pytest.skip("LEDGER_TEST_DATABASE_URL is not configured")
     engine = create_engine(url)
+    prepare_storage(engine)
     DbBackend.create_tables(engine)
     backend = DbBackend(engine)
     layer_id = f"guard-{uuid.uuid4().hex}"
@@ -130,6 +134,7 @@ def test_postgres_guards_and_role_matrix() -> None:
                 }
             ],
         },
+        product_repo_id=owner_of(backend),
     )
 
     for statement in (

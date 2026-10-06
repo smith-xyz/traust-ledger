@@ -23,6 +23,7 @@ import pytest
 from conftest import LAYER_ID, auth_header, canonical_shell
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from storage_db import owner_of, prepare_storage
 from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.backends import create_backend
@@ -282,7 +283,7 @@ class TestLedgerClient:
 def _exercise_restatement(backend, data_dir: Path, layer_id: str) -> dict:
     """Drive one restatement through a backend and return the reloaded layer."""
     path = layer_file_path(str(data_dir), layer_id)
-    backend.initialize(path, _shell_with_claims())
+    backend.initialize(path, _shell_with_claims(), owner_of(backend))
     writer = LedgerWriter(backend=backend)
     config = ServiceConfig(data_dir=str(data_dir))
     apply_restatement(
@@ -300,6 +301,8 @@ def _exercise_restatement(backend, data_dir: Path, layer_id: str) -> dict:
 @pytest.mark.parametrize("backend_type", [BACKEND_TYPE_FILE, BACKEND_TYPE_DB])
 def test_restatement_lifecycle_file_and_sqlite(backend_type: str, tmp_path: Path) -> None:
     data_dir = tmp_path / "layers"
+    if backend_type == BACKEND_TYPE_DB:
+        prepare_storage(f"sqlite:///{tmp_path / 'ledger.db'}")
     backend = create_backend(
         backend_type,
         data_dir=data_dir,
@@ -327,6 +330,7 @@ def test_sqlite_refuses_to_drop_a_restatement_event(tmp_path: Path) -> None:
     """Append-only is what makes a restatement evidence rather than a claim."""
     data_dir = tmp_path / "layers"
     engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}")
+    prepare_storage(engine)
     DbBackend.create_tables(engine)
     backend = DbBackend(engine)
     layer = _exercise_restatement(backend, data_dir, "correct-append-only")

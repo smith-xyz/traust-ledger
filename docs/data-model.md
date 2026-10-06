@@ -9,15 +9,28 @@ query bindings, upgrade hooks, grants, and persistence. The ledger's guard
 installation is idempotent (`IF NOT EXISTS` / `DROP + CREATE`) since contracts
 now ships the triggers directly.
 
-PostgreSQL uses the `traust_ledger` schema; SQLite uses a dedicated database file.
+PostgreSQL uses the `traust_ledger` schema; SQLite uses a database file. The
+ledger lives in the same database as traust storage: bootstrap refuses to run
+until storage (`traust_contracts` `Store.init`) is initialized at its current
+revision, because `layers.product_repo_id` references `traust_storage.product_repo`.
 
 ## Initialization
 
-A layer must be explicitly initialized with a complete layer shell before any
-append: `LedgerClient.create(layer_id, shell=...)`,
-`ledger initialize FILE --layer ID`, or `POST /v1/ledger/layers/{id}/initialize`.
+A layer must be explicitly initialized with a complete layer shell and the
+storage product_repo it belongs to before any append:
+`LedgerClient.create(layer_id, shell=..., product_repo_id=...)`,
+`ledger initialize FILE --layer ID --product-repo-id ID`, or
+`POST /v1/ledger/layers/{id}/initialize` with body `{"product_repo_id": ..., "layer": {...}}`.
+`product_repo_id` is required on database backends (one layer per product_repo)
+and ignored by the file backend, where the folder convention carries ownership.
 Initialization rejects existing layers and never invents audit metadata.
-Historical migration is a separate administrative import.
+Reads are anchored the same way: `GET /v1/ledger/layers` lists
+`{layer_id, product_repo_id}` pairs, `?product_repo_id=` returns that
+product_repo's layer (404 if none). `product_repo_id` must be a lowercase UUID
+(storage-assigned) wherever it is accepted.
+Historical migration is a separate administrative import; selection-manifest
+records carry `product_repo_id`, and directory sources (which cannot) are
+quarantined for database targets.
 
 ## Schema
 
@@ -28,6 +41,7 @@ erDiagram
 
     layers {
         text layer_id PK
+        text product_repo_id FK "traust_storage.product_repo, unique"
         bytes metadata_payload
         bytes needs_review_payload
         bytes extensions_payload

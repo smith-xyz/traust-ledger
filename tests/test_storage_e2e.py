@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -10,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, func, select
+from storage_db import owner_of, prepare_storage
 
 from traust_ledger._internal.backends import Backend, create_backend
 from traust_ledger._internal.backends.constants import BACKEND_TYPE_DB, BACKEND_TYPE_FILE
@@ -58,6 +60,7 @@ def _exercise_backend(factory: BackendFactory, layer_path: Path) -> None:
             "events": [],
             "needs_review": [],
         },
+        owner_of(backend),
     )
     first = _event("first.json")
     second = _event("second.json")
@@ -81,6 +84,9 @@ def test_file_and_sqlite_storage_lifecycle(
     data_dir = tmp_path / "layers"
     database_url = f"sqlite:///{tmp_path / 'ledger.db'}"
 
+    if backend_type == BACKEND_TYPE_DB:
+        prepare_storage(database_url)
+
     def factory() -> Backend:
         return create_backend(
             backend_type,
@@ -97,6 +103,7 @@ def test_postgresql_storage_lifecycle() -> None:
     if not url:
         pytest.skip("LEDGER_TEST_DATABASE_URL is not configured")
     layer_id = f"storage-e2e-{uuid.uuid4().hex}"
+    prepare_storage(url)
 
     def factory() -> Backend:
         return create_backend(BACKEND_TYPE_DB, database_url=url)
@@ -149,9 +156,14 @@ def test_exact_file_database_json_round_trip(backend_type: str, tmp_path: Path) 
     validate_layer(source)
     FileBackend().store(path, source)
     engine = create_engine(url)
+    prepare_storage(engine)
     DbBackend.create_tables(engine)
     backend = DbBackend(engine)
-    assert backend.import_layer(layer_id, FileBackend().export_layer(path)) == "inserted"
+    owner = owner_of(backend)
+    assert (
+        backend.import_layer(layer_id, FileBackend().export_layer(path), product_repo_id=owner)
+        == "inserted"
+    )
     exported = backend.load_layer_id(layer_id)
     validate_layer(exported)
     assert exported == source
@@ -189,10 +201,40 @@ def test_file_to_sqlite_migration_and_materialization(
 ) -> None:
     source = tmp_path / "source"
     source.mkdir()
-    (source / "layer-a.json").write_text(json.dumps(_complete_layer()), encoding="utf-8")
+    payload = json.dumps(_complete_layer()).encode()
+    (source / "layer-a.json").write_bytes(payload)
     target = f"sqlite:///{tmp_path / 'target.db'}"
+    manifest = tmp_path / "selection.jsonl"
+    manifest.write_text(
+        json.dumps(
+            {
+                "format_version": 1,
+                "source_file": "layer-a.json",
+                "source_digest": hashlib.sha256(payload).hexdigest(),
+                "namespace": "traust_ledger",
+                "decision": "selected",
+                "artifact": "layer",
+                "layer_id": "layer-a",
+                "product_repo_id": prepare_storage(target),
+            }
+        )
+        + "\n"
+    )
 
-    assert main(["migrate", "--source-dir", str(source), "--target-database-url", target]) == 0
+    assert (
+        main(
+            [
+                "migrate",
+                "--source-dir",
+                str(source),
+                "--selection-manifest",
+                str(manifest),
+                "--target-database-url",
+                target,
+            ]
+        )
+        == 0
+    )
     monkeypatch.setenv("LAAS_BACKEND_TYPE", BACKEND_TYPE_DB)
     monkeypatch.setenv("LAAS_DATABASE_URL", target)
     assert main(["materialize", "--to", target]) == 0

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from traust_ledger.api.findings import FindingDisposition, FindingsSummary
+from traust_ledger.constants.domain import PRODUCT_REPO_ID_PATTERN
+
+
+class InitializeRequest(BaseModel):
+    product_repo_id: str | None = Field(..., pattern=PRODUCT_REPO_ID_PATTERN)
+    layer: dict
 
 
 class EventEnvelope(BaseModel):
@@ -95,8 +101,13 @@ class FingerprintResponse(BaseModel):
     stamped_count: int
 
 
+class LayerRef(BaseModel):
+    layer_id: str
+    product_repo_id: str | None = None
+
+
 class LayerListResponse(BaseModel):
-    layers: list[str]
+    layers: list[LayerRef]
 
 
 class StampRequest(BaseModel):

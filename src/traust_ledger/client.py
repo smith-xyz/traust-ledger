@@ -379,12 +379,19 @@ class LedgerClient:
         layer_id: str,
         *,
         shell: dict[str, Any] | None = None,
+        product_repo_id: str | None = None,
     ) -> dict[str, Any]:
         """OIDC-gated creation; the caller must supply a complete layer shell."""
         if shell is None:
             raise LedgerError("a complete layer shell is required for initialization")
         return self._invoke(
-            initialize_layer, layer_id, shell, self._actor(), self._backend, self._config
+            initialize_layer,
+            layer_id,
+            shell,
+            self._actor(),
+            self._backend,
+            self._config,
+            product_repo_id,
         )
 
     def store(self, layer_id: str, layer: dict[str, Any]) -> dict[str, Any]:

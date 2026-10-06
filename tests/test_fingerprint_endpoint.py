@@ -110,7 +110,7 @@ def test_list_layers_returns_ids(tmp_path: Path) -> None:
     client = TestClient(_app(tmp_path))
     resp = client.get("/v1/ledger/layers", headers=AUTH_HEADER)
     assert resp.status_code == 200
-    assert LAYER_ID in resp.json()["layers"]
+    assert {"layer_id": LAYER_ID, "product_repo_id": None} in resp.json()["layers"]
 
 
 def test_list_layers_no_auth_401(tmp_path: Path) -> None:

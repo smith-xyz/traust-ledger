@@ -112,6 +112,10 @@ class LayerNotFoundError(NotFoundError):
     message = "layer not found: {layer_id}"
 
 
+class ProductRepoLayerNotFoundError(NotFoundError):
+    message = "no layer for product_repo: {product_repo_id}"
+
+
 class SigningRequiredError(ServiceError):
     message = (
         "signing is required but no signer is configured — "
@@ -260,6 +264,7 @@ __all__ = [
     "NotAnAdminError",
     "NotFoundError",
     "NothingToRestateError",
+    "ProductRepoLayerNotFoundError",
     "RationaleTooShortError",
     "RestatementAuthorityError",
     "RetiredValueRestatedError",

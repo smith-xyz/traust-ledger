@@ -15,6 +15,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from pytest_httpserver import HTTPServer
+from storage_db import owner_of, storage_for
 
 from traust_ledger._internal.backends.constants import BACKEND_TYPE_DB
 from traust_ledger.config import ServiceConfig
@@ -115,8 +116,11 @@ def auth_client(tmp_path, httpserver: HTTPServer, rsa_keypair, jwks_json):
     )
     from conftest import canonical_shell
 
+    storage_for(config)
     app = create_app(config)
-    app.state.backend.initialize(tmp_path / f"{LAYER}.json", canonical_shell())
+    app.state.backend.initialize(
+        tmp_path / f"{LAYER}.json", canonical_shell(), owner_of(app.state.backend)
+    )
     return TestClient(app)
 
 
@@ -262,10 +266,13 @@ def test_oidc_plus_ldap_cross_check(
         oidc_issuer=TEST_ISSUER,
         oidc_jwks_url=jwks_url,
     )
+    storage_for(config)
     app = create_app(config)
     from conftest import canonical_shell
 
-    app.state.backend.initialize(tmp_path / f"{LAYER}.json", canonical_shell())
+    app.state.backend.initialize(
+        tmp_path / f"{LAYER}.json", canonical_shell(), owner_of(app.state.backend)
+    )
     app.state.resolver._directory = _FakeDirectory(active=True)
     client = TestClient(app)
 
@@ -308,10 +315,13 @@ def test_oidc_ldap_not_found_rejected(
         oidc_issuer=TEST_ISSUER,
         oidc_jwks_url=jwks_url,
     )
+    storage_for(config)
     app = create_app(config)
     from conftest import canonical_shell
 
-    app.state.backend.initialize(tmp_path / f"{LAYER}.json", canonical_shell())
+    app.state.backend.initialize(
+        tmp_path / f"{LAYER}.json", canonical_shell(), owner_of(app.state.backend)
+    )
     app.state.resolver._directory = _FakeDirectory(active=False)
     client = TestClient(app)
 
@@ -566,6 +576,7 @@ class TestMultiIssuerOIDC:
             signing_required=False,
             oidc_trust=trust,
         )
+        storage_for(config)
         return TestClient(create_app(config))
 
     def test_human_token_from_issuer_a_accepted(self, tmp_path, httpserver, rsa_keypair, jwks_json):

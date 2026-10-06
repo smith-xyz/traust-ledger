@@ -43,6 +43,10 @@ def register_write_parsers(subparsers: argparse._SubParsersAction) -> None:
     init_p = subparsers.add_parser("initialize", help="Create a complete layer from JSON")
     init_p.add_argument("layer_file", help="Complete schema-valid layer JSON")
     init_p.add_argument("--layer", required=True, help="Target layer ID")
+    init_p.add_argument(
+        "--product-repo-id",
+        help="Storage product_repo the layer belongs to (required for database backends)",
+    )
     init_p.set_defaults(handler=cmd_initialize)
 
     sub_p = subparsers.add_parser("submit", help="Batch-submit pre-formed events and queue items")

@@ -9,6 +9,7 @@ import pytest
 from auth_helpers import TokenActorVerifier
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from storage_db import prepare_storage
 from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.backends.db import DbBackend
@@ -31,13 +32,25 @@ SHELL = {
 }
 
 
+def _create(layer: dict, product_repo_id: str | None = None) -> dict:
+    return {"product_repo_id": product_repo_id, "layer": layer}
+
+
 def test_initialize_rest_requires_identity_and_never_replaces(tmp_path: Path) -> None:
     config = ServiceConfig(data_dir=str(tmp_path), signing_required=False)
     client = TestClient(create_app(config, verifier=TokenActorVerifier()))
     url = "/v1/ledger/layers/new-layer/initialize"
-    assert client.post(url, json=SHELL).status_code == 401
+    assert client.post(url, json=_create(SHELL)).status_code == 401
     assert (
-        client.post(url, json={"events": []}, headers={"Authorization": "Bearer alice"}).status_code
+        client.post(
+            url, json=_create({"events": []}), headers={"Authorization": "Bearer alice"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            url, json={"layer": SHELL}, headers={"Authorization": "Bearer alice"}
+        ).status_code
         == 422
     )
     headers = {"Authorization": "Bearer alice"}
@@ -58,10 +71,10 @@ def test_initialize_rest_requires_identity_and_never_replaces(tmp_path: Path) ->
             }
         ],
     }
-    response = client.post(url, json=shell_with_history, headers=headers)
+    response = client.post(url, json=_create(shell_with_history), headers=headers)
     assert response.status_code == 422
     assert "administrative migration" in response.json()["detail"]
-    assert client.post(url, json=SHELL, headers=headers).status_code == 200
+    assert client.post(url, json=_create(SHELL), headers=headers).status_code == 200
     assert client.get("/v1/ledger/layers/new-layer", headers=headers).json() == SHELL
     invalid = {
         "source_ref": "report.json",
@@ -78,7 +91,7 @@ def test_initialize_rest_requires_identity_and_never_replaces(tmp_path: Path) ->
     assert rejected.status_code == 422
     assert "invalid complete layer" in rejected.json()["detail"]
     assert FileBackend().load(tmp_path / "new-layer.json") == SHELL
-    assert client.post(url, json=SHELL, headers=headers).status_code == 422
+    assert client.post(url, json=_create(SHELL), headers=headers).status_code == 422
     assert FileBackend().load(tmp_path / "new-layer.json") == SHELL
 
 
@@ -87,10 +100,12 @@ def test_initialize_rest_requires_identity_and_never_replaces(tmp_path: Path) ->
 def test_rest_sign_stamp_require_canonical_initialized_layer(
     tmp_path: Path, operation: str, backend_type: str
 ) -> None:
+    database_url = f"sqlite:///{tmp_path / 'rest.db'}" if backend_type == "db" else None
+    owner = prepare_storage(database_url) if database_url else None
     config = ServiceConfig(
         data_dir=str(tmp_path),
         backend_type=backend_type,
-        database_url=f"sqlite:///{tmp_path / 'rest.db'}" if backend_type == "db" else None,
+        database_url=database_url,
         signing_required=False,
     )
     app = create_app(config, verifier=TokenActorVerifier())
@@ -106,12 +121,14 @@ def test_rest_sign_stamp_require_canonical_initialized_layer(
         assert client.post(url, json=body, headers=headers).status_code == 404
         assert json.loads(path.read_text(encoding="utf-8")) == {"events": []}
         path.unlink()
-    assert (
-        client.post(
-            "/v1/ledger/layers/rest-layer/initialize", json=SHELL, headers=headers
-        ).status_code
-        == 200
-    )
+    initialize = "/v1/ledger/layers/rest-layer/initialize"
+    if backend_type == "db":
+        missing = client.post(initialize, json=_create(SHELL), headers=headers)
+        assert missing.status_code == 422
+        assert "product_repo_id is required" in missing.json()["detail"]
+    assert client.post(initialize, json=_create(SHELL, owner), headers=headers).status_code == 200
+    if backend_type == "db":
+        assert app.state.backend.product_repo_id("rest-layer") == owner
     assert client.post(url, json=body, headers=headers).status_code == 200
     layer = app.state.backend.load(tmp_path / "rest-layer.json")
     assert layer["metadata"]["audit_report"] == "audit.json"
@@ -139,15 +156,19 @@ def test_initialize_cli_uses_shared_handler(tmp_path: Path, monkeypatch, capsys)
 
 def test_initialize_sqlite_is_atomic_and_complete(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'initialized.db'}")
+    owner = prepare_storage(engine)
     DbBackend.create_tables(engine)
     backend = DbBackend(engine)
     path = Path("initialized.json")
-    backend.initialize(path, SHELL)
-    assert backend.load(path) == SHELL
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(ValueError, match="product_repo_id is required"):
         backend.initialize(path, SHELL)
+    backend.initialize(path, SHELL, owner)
+    assert backend.load(path) == SHELL
+    assert backend.product_repo_id("initialized") == owner
+    with pytest.raises(ValueError, match="already exists"):
+        backend.initialize(path, SHELL, owner)
     with pytest.raises(ValueError, match="invalid complete layer"):
-        backend.initialize(Path("incomplete.json"), {"events": []})
+        backend.initialize(Path("incomplete.json"), {"events": []}, owner)
     assert backend.list_layer_ids() == ["initialized"]
 
 
@@ -226,3 +247,49 @@ def test_uninitialized_write_rejected_across_entry_points(
     )
     with pytest.raises(LedgerError, match="not initialized"):
         sdk.sign("missing")
+
+
+def test_layer_reads_are_anchored_to_product_repo(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'anchor.db'}"
+    owner = prepare_storage(database_url)
+    unowned = prepare_storage(database_url, repo_url="https://example.test/unowned")
+    config = ServiceConfig(
+        data_dir=str(tmp_path),
+        backend_type="db",
+        database_url=database_url,
+        signing_required=False,
+    )
+    client = TestClient(create_app(config, verifier=TokenActorVerifier()))
+    headers = {"Authorization": "Bearer alice"}
+    initialize = "/v1/ledger/layers/anchored/initialize"
+    assert client.post(initialize, json=_create(SHELL, owner), headers=headers).status_code == 200
+
+    listed = client.get("/v1/ledger/layers", headers=headers).json()["layers"]
+    assert listed == [{"layer_id": "anchored", "product_repo_id": owner}]
+    found = client.get("/v1/ledger/layers", params={"product_repo_id": owner}, headers=headers)
+    assert found.json()["layers"] == listed
+    missing = client.get("/v1/ledger/layers", params={"product_repo_id": unowned}, headers=headers)
+    assert missing.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "not-a-uuid",
+        "../etc/passwd",
+        "' OR 1=1 --",
+        "A" * 36,
+        "ABCDEF12-0000-4000-8000-000000000000",
+    ],
+)
+def test_product_repo_id_is_a_storage_uuid(tmp_path: Path, value: str) -> None:
+    config = ServiceConfig(data_dir=str(tmp_path), signing_required=False)
+    client = TestClient(create_app(config, verifier=TokenActorVerifier()))
+    headers = {"Authorization": "Bearer alice"}
+    listed = client.get("/v1/ledger/layers", params={"product_repo_id": value}, headers=headers)
+    assert listed.status_code == 422
+    created = client.post(
+        "/v1/ledger/layers/new-layer/initialize", json=_create(SHELL, value), headers=headers
+    )
+    assert created.status_code == 422

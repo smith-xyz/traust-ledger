@@ -229,9 +229,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Shell"
+                "$ref": "#/components/schemas/InitializeRequest"
               }
             }
           }
@@ -825,6 +823,27 @@
       "get": {
         "summary": "List Layers",
         "operationId": "list_layers_v1_ledger_layers_get",
+        "parameters": [
+          {
+            "name": "product_repo_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the layer of this product_repo",
+              "title": "Product Repo Id"
+            },
+            "description": "Only the layer of this product_repo"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -842,6 +861,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No layer belongs to the product_repo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1454,6 +1493,33 @@
         ],
         "title": "HealthResponse"
       },
+      "InitializeRequest": {
+        "properties": {
+          "product_repo_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Repo Id"
+          },
+          "layer": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Layer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_repo_id",
+          "layer"
+        ],
+        "title": "InitializeRequest"
+      },
       "LayerActor": {
         "properties": {
           "kind": {
@@ -1611,7 +1677,7 @@
         "properties": {
           "layers": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/LayerRef"
             },
             "type": "array",
             "title": "Layers"
@@ -1622,6 +1688,30 @@
           "layers"
         ],
         "title": "LayerListResponse"
+      },
+      "LayerRef": {
+        "properties": {
+          "layer_id": {
+            "type": "string",
+            "title": "Layer Id"
+          },
+          "product_repo_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Repo Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "layer_id"
+        ],
+        "title": "LayerRef"
       },
       "ResolutionCounts": {
         "properties": {

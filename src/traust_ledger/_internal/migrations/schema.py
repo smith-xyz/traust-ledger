@@ -23,12 +23,14 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    event,
     inspect,
     select,
     text,
 )
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import ConnectionPoolEntry
 from sqlalchemy.sql import func
 from traust_contracts.v1.ledger import (
     CONTRACT_VERSION,
@@ -44,9 +46,12 @@ from traust_contracts.v1.ledger import (
 from traust_contracts.v1.ledger import (
     bootstrap_statements as ledger_bootstrap_statements,
 )
+from traust_contracts.v1.storage.sql import CONTRACT_VERSION as STORAGE_CONTRACT_VERSION
+from traust_contracts.v1.storage.sql import REVISION as STORAGE_REVISION
 
 LEDGER_SCHEMA = POSTGRES_SCHEMA
 SCHEMA_REVISION = REVISION
+STORAGE_SCHEMA = "traust_storage"
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,7 @@ def ledger_tables(dialect_name: str) -> LedgerTables:
             onupdate=func.now(),
             nullable=False,
         ),
+        Column("product_repo_id", Text),
     )
     events = Table(
         "events",
@@ -181,9 +187,40 @@ def _contract_dialect(dialect_name: str) -> ContractDialect:
 
 def _install_contract_schema(conn, dialect_name: str) -> None:
     dialect = _contract_dialect(dialect_name)
-    for path in ledger_bootstrap_files(dialect):
-        for statement in ledger_bootstrap_statements(dialect, path):
-            conn.exec_driver_sql(statement)
+    # No bind params: plpgsql bodies contain literal %.
+    cursor = conn.connection.dbapi_connection.cursor()
+    try:
+        for path in ledger_bootstrap_files(dialect):
+            for statement in ledger_bootstrap_statements(dialect, path):
+                cursor.execute(statement)
+    finally:
+        cursor.close()
+
+
+def _require_storage(conn: Connection, dialect_name: str) -> None:
+    schema = STORAGE_SCHEMA if dialect_name == "postgresql" else None
+    if not inspect(conn).has_table("traust_storage_meta", schema=schema):
+        raise RuntimeError(
+            "ledger database requires traust storage in the same database; "
+            "initialize storage first (traust_contracts Store.init)"
+        )
+    table = f"{schema}.traust_storage_meta" if schema else "traust_storage_meta"
+    row = conn.execute(text(f"SELECT contract_version, revision FROM {table} WHERE id = 1")).first()
+    expected = (STORAGE_CONTRACT_VERSION, STORAGE_REVISION)
+    if row is None or tuple(row) != expected:
+        raise RuntimeError(f"ledger database requires traust storage {expected!r}; found {row!r}")
+
+
+def enable_sqlite_foreign_keys(engine: Engine) -> None:
+    if engine.dialect.name != "sqlite" or event.contains(engine, "checkout", _sqlite_fk_on):
+        return
+    event.listen(engine, "checkout", _sqlite_fk_on)
+
+
+def _sqlite_fk_on(dbapi_conn, _record: ConnectionPoolEntry, _proxy: object) -> None:  # type: ignore[no-untyped-def]
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys = ON")
+    cursor.close()
 
 
 def _install_sqlite_guards(conn) -> None:
@@ -339,6 +376,7 @@ def upgrade(engine: Engine) -> LedgerTables:
     exists = inspect(engine).has_table("schema_revision", schema=schema)
     with engine.begin() as conn:
         if not exists:
+            _require_storage(conn, engine.dialect.name)
             _install_contract_schema(conn, engine.dialect.name)
             conn.execute(
                 text(
