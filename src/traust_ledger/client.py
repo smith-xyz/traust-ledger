@@ -406,6 +406,20 @@ class LedgerClient:
         sig_check = check_signatures or self._config.signing_required
         return self._invoke(verify_layer, layer, check_signatures=sig_check)
 
+    def get_layer(self, layer_id: str) -> dict[str, Any]:
+        """The complete, schema-valid layer document (events, queue, signed metadata).
+
+        The read a caller needs to export a snapshot of the authoritative layer, e.g.
+        a harness writing a read-only file for a sandboxed session. Raises
+        ``LedgerError`` if the layer does not exist.
+        """
+        return self._invoke(load_layer, layer_id, self._backend, self._config)
+
+    def find_layer(self, product_repo_id: str) -> str | None:
+        """The layer owned by *product_repo_id*, or None. At most one exists per owner."""
+        refs = self._backend.list_layer_refs(product_repo_id)
+        return refs[0][0] if refs else None
+
     def query_findings(self, layer_id: str) -> dict[str, Any]:
         return self._invoke(
             resolve_findings,

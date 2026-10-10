@@ -199,3 +199,41 @@ def test_countersign_and_sign_reach_opaque_database_layer(tmp_path: Path) -> Non
     events = client._backend.load_layer_id(OPAQUE_LAYER_ID)["events"]
     assert [e["disposition"]["validity"] for e in events] == ["false_positive"]
     assert client.verify(OPAQUE_LAYER_ID)
+
+
+def test_get_layer_and_find_layer_read_the_authoritative_database_layer(tmp_path: Path) -> None:
+    # A harness exports this document as its read-only session snapshot.
+    from conftest import canonical_shell
+    from storage_db import prepare_storage
+
+    database_url = f"sqlite:///{tmp_path / 'ledger.db'}"
+    owner = prepare_storage(database_url)
+    unowned = prepare_storage(database_url, repo_url="https://example.test/unowned")
+    client = LedgerClient(
+        token=FAKE_TOKEN,
+        backend_type="db",
+        database_url=database_url,
+        signing_config=SigningConfig(method="none"),
+        signing_required=False,
+    )
+    client._actor = lambda: _human()  # type: ignore[method-assign]
+    client._backend.import_layer(OPAQUE_LAYER_ID, canonical_shell(), product_repo_id=owner)
+
+    assert client.find_layer(owner) == OPAQUE_LAYER_ID
+    assert client.find_layer(unowned) is None
+
+    client.countersign(
+        OPAQUE_LAYER_ID,
+        "F-1",
+        rationale=RATIONALE,
+        recorded_at=AT,
+        decision="false_positive",
+        actor=_human(),
+    )
+    layer = client.get_layer(OPAQUE_LAYER_ID)
+    assert layer == client._backend.load_layer_id(OPAQUE_LAYER_ID)
+    assert [e["disposition"]["validity"] for e in layer["events"]] == ["false_positive"]
+    assert layer["metadata"]["merkle_size"] == 1
+
+    with pytest.raises(LedgerError, match="not found"):
+        client.get_layer("corpus:layer:absent")
