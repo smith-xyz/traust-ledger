@@ -2,6 +2,52 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.10.0]
+
+### Added
+
+- **Query-addressed layer routes.** Every layer operation is also served at
+  `/v1/ledger/layer<op>?layer_id=` (`GET` document, `/events`, `/findings`,
+  `/cumulative`, `/verify`; `POST` `/submit`, `/resolve`, `/restate`, `/sign`,
+  `/stamp`). A query value carries any opaque database ID, including `:` and
+  `/` (migrated corpus IDs such as `corpus:layer:<subject>`), which one path
+  segment cannot. The same handler serves both styles; the existing
+  `/v1/ledger/layers/{layer_id}…` routes remain for IDs that fit a segment.
+
+### Fixed
+
+- **Database layer IDs are opaque on every path.** Handlers, `LedgerClient` and
+  the sign/stamp routes resolved every ID through the filename rule
+  (`LAYER_ID_PATTERN`), so migrated layers whose IDs contain `:` or `/` could be
+  listed but not read, countersigned, resolved, restated, signed or stamped.
+  IDs now resolve per backend: file layers keep the confined-filename rule;
+  database layers bind the ID verbatim (printable, no surrounding whitespace,
+  at most 512 characters). `POST /v1/ledger/events` accepts such IDs in the
+  body, and bulk `GET /v1/ledger/findings` no longer fails on them.
+- **A second layer for one `product_repo` is a conflict, not a 500.**
+  `initialize` and `import_layer` now refuse an owner that already has a layer
+  (`LayerConflictError`, 422 over REST, naming the existing layer), and a
+  racing insert or an owner not registered in storage maps to the same
+  conflict instead of an unhandled `IntegrityError`. Dry-run imports report it
+  too.
+- Core installs (no `db` extra) still import `traust_ledger.client` without
+  SQLAlchemy.
+
+### Notes
+
+- `POST /v1/ledger/layers/{layer_id}/initialize` has no query-addressed twin by
+  design: layers with `:`/`/` IDs arrive through the administrative importer,
+  never HTTP initialization.
+- **Client support follows in the Go SDK.** Existing SDK releases still splice
+  the layer ID into the path, so they cannot reach corpus-ID layers; the
+  companion SDK change moves every layer call to `/v1/ledger/layer…?layer_id=`.
+  Deploy this release before that SDK reaches SCI or the worker.
+
+### Changed
+
+- Pins traust-contracts 0.52.0, the revert of generated numeric identity
+  (contracts 0.51.0): layer IDs are TEXT again.
+
 ## [0.9.0]
 
 ### Security

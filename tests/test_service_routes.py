@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from auth_helpers import TokenActorVerifier
 from conftest import (
     AUTH_HEADER,
@@ -91,6 +92,67 @@ def _countersign_body(**overrides: object) -> dict[str, object]:
     }
     event.update(overrides)
     return {"kind": "countersign", "event": event}
+
+
+def test_database_layer_loader_does_not_convert_ids_to_file_paths(monkeypatch) -> None:
+    from conftest import canonical_shell
+
+    from traust_ledger._internal.backends.db import DbBackend
+    from traust_ledger.handlers.layer_handler import load_layer
+
+    seen = []
+    shell = canonical_shell()
+    backend = object.__new__(DbBackend)
+    monkeypatch.setattr(
+        DbBackend, "load_layer_id", lambda self, identity: seen.append(identity) or shell
+    )
+    identity = "corpus:layer:findings/product/repository/report"
+    assert load_layer(identity, backend, ServiceConfig(backend_type="db")) == shell
+    assert seen == [identity]
+
+
+def test_corpus_layer_read_routes_preserve_full_id(
+    client: TestClient, app_with_backend, monkeypatch
+) -> None:
+    from conftest import canonical_shell
+
+    from traust_ledger.service import routes
+
+    seen = []
+    layer_id = "corpus:layer:findings/product/repository/report"
+    shell = canonical_shell()
+
+    def load(identifier, backend, config):
+        seen.append(identifier)
+        return shell
+
+    monkeypatch.setattr(routes, "load_layer", load)
+    monkeypatch.setattr(
+        routes,
+        "resolve_findings",
+        lambda identifier, backend, config: (
+            seen.append(identifier)
+            or {
+                "layer_id": identifier,
+                "findings": [],
+                "summary": {"by_validity": {}, "by_resolution": {}},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        routes,
+        "query_layer_events",
+        lambda identifier, backend, config, **kwargs: (
+            seen.append(identifier) or {"layer_id": identifier, "events": [], "total": 0}
+        ),
+    )
+    params = {"layer_id": layer_id}
+    for suffix in ("/events", "/findings", "/cumulative", "/verify", ""):
+        route = f"/v1/ledger/layer{suffix}"
+        response = client.get(route, params=params, headers=AUTH_HEADER)
+        assert response.status_code == 200, response.text
+        assert seen[-1] == layer_id
+        assert client.get(route, params=params).status_code == 401
 
 
 def test_healthz(client: TestClient) -> None:
@@ -513,3 +575,72 @@ def test_actor_resolution_distinct_identities(tmp_path: Path) -> None:
     assert identities[0] != identities[1]
     assert identities[0] == "user:alice"
     assert identities[1] == "user:bob"
+
+
+# ─── Opaque database layer IDs (query addressing) ─────────────────────────────
+
+OPAQUE_LAYER_ID = "corpus:layer:org/repo__main/repo__main"
+ALICE = {"Authorization": "Bearer alice"}
+
+
+def _opaque_db_client(tmp_path: Path) -> TestClient:
+    from conftest import canonical_shell
+    from sqlalchemy import create_engine
+    from storage_db import prepare_storage
+
+    from traust_ledger._internal.backends.db import DbBackend
+
+    database_url = f"sqlite:///{tmp_path / 'ledger.db'}"
+    owner = prepare_storage(database_url)
+    config = ServiceConfig(
+        data_dir=str(tmp_path),
+        backend_type="db",
+        database_url=database_url,
+        signing_required=False,
+    )
+    client = TestClient(create_app(config, verifier=TokenActorVerifier()))
+    DbBackend(create_engine(database_url)).import_layer(
+        OPAQUE_LAYER_ID, canonical_shell(), product_repo_id=owner
+    )
+    return client
+
+
+def test_query_routes_read_and_write_opaque_database_layer(tmp_path: Path) -> None:
+    client = _opaque_db_client(tmp_path)
+    params = {"layer_id": OPAQUE_LAYER_ID}
+    countersign = _countersign_body(layer_id=OPAQUE_LAYER_ID)
+    assert client.post("/v1/ledger/events", json=countersign, headers=ALICE).status_code == 200
+
+    layer = client.get("/v1/ledger/layer", params=params, headers=ALICE)
+    assert layer.status_code == 200
+    assert [e["finding_ref"] for e in layer.json()["events"]] == ["FIND-001"]
+    for suffix in ("/events", "/findings", "/cumulative", "/verify"):
+        response = client.get(f"/v1/ledger/layer{suffix}", params=params, headers=ALICE)
+        assert response.status_code == 200, (suffix, response.text)
+    signed = client.post("/v1/ledger/layer/sign", params=params, headers=ALICE)
+    assert signed.status_code == 200, signed.text
+    assert signed.json()["layer_id"] == OPAQUE_LAYER_ID
+
+    bulk = client.get("/v1/ledger/findings", headers=ALICE).json()
+    assert [entry["layer_id"] for entry in bulk["layers"]] == [OPAQUE_LAYER_ID]
+
+
+def test_path_and_query_routes_serve_the_same_layer(client: TestClient) -> None:
+    by_path = client.get(f"/v1/ledger/layers/{LAYER_ID}", headers=AUTH_HEADER)
+    by_query = client.get("/v1/ledger/layer", params={"layer_id": LAYER_ID}, headers=AUTH_HEADER)
+    assert by_path.status_code == by_query.status_code == 200
+    assert by_path.json() == by_query.json()
+
+
+@pytest.mark.parametrize("layer_id", ["", " padded", "line\nbreak", "x" * 513])
+def test_query_route_rejects_malformed_database_ids(tmp_path: Path, layer_id: str) -> None:
+    client = _opaque_db_client(tmp_path)
+    response = client.get("/v1/ledger/layer", params={"layer_id": layer_id}, headers=ALICE)
+    assert 400 <= response.status_code < 500, response.text
+    assert response.status_code != 404
+
+
+def test_query_route_requires_layer_id_and_auth(tmp_path: Path) -> None:
+    client = _opaque_db_client(tmp_path)
+    assert client.get("/v1/ledger/layer", headers=ALICE).status_code == 422
+    assert client.get("/v1/ledger/layer", params={"layer_id": OPAQUE_LAYER_ID}).status_code == 401
