@@ -2,6 +2,19 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.11.0]
+
+### Added
+
+- **`LedgerClient.get_layer(layer_id)`** returns the complete, schema-valid layer
+  document (events, review queue, signed metadata) from the configured
+  backend, raising `LedgerError` when the layer does not exist. It lets a
+  harness export a read-only snapshot of the authoritative database layer for
+  a sandboxed session, which then never needs ledger credentials.
+- **`LedgerClient.find_layer(product_repo_id)`** returns the layer owned by a
+  `product_repo`, or `None` (at most one exists per owner), so in-process
+  callers resolve a layer by owner instead of deriving it from a path.
+
 ## [0.10.0]
 
 ### Added
