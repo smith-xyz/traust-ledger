@@ -2,6 +2,13 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.11.1]
+
+### Changed
+
+- Pins traust-contracts 0.53.0 (adds the optional `ledger.yaml` config section
+  consumed by traust-engine; no Ledger schema or wire change).
+
 ## [0.11.0]
 
 ### Added
