@@ -7,6 +7,7 @@ resources:
   - service.yaml
   - deployment.yaml
   - cronjob.yaml
+  - cronjob-materialize.yaml
 
 # Production: add a sibling overlay (e.g. overlays/prod/) that patches configmap,
 # references secret.yaml, and swaps emptyDir for a PVC on the data volume.

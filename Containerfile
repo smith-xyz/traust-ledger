@@ -132,4 +132,8 @@ HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
 # Run as the base image's non-root user, matching the file ownership above.
 USER 65532
 
-ENTRYPOINT ["uvicorn", "traust_ledger.service.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# Two worker processes: sync-route handlers run in the threadpool, but a
+# second process keeps serving (and answering probes) when one is busy on a
+# CPU-bound fold. Both are safe against each other — the DB backend uses
+# row locks, the file backend fcntl locks.
+ENTRYPOINT ["uvicorn", "traust_ledger.service.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

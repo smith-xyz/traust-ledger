@@ -57,18 +57,26 @@ spec:
               path: /healthz
               port: http
             periodSeconds: 15
+            # healthz is a trivial async handler, but it queues behind the
+            # event loop when a burst of layer work is in flight — the 1s
+            # default killed the container ~hourly under the listing fan-out
+            # before routes moved off the loop (2026-10-13 incident).
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /healthz
               port: http
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests:
               memory: "128Mi"
-              cpu: "250m"
-            limits:
-              memory: "256Mi"
               cpu: "500m"
+            limits:
+              memory: "512Mi"
+              cpu: "1"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
