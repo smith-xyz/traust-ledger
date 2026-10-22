@@ -2,6 +2,12 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.11.4]
+
+- Pin traust-contracts 0.62.0 (`f8c9cbd`): `owasp_llm_references` on report
+  findings and storage revision 6 (`report_finding.owasp_llm_references`).
+  No ledger code change.
+
 ## [0.11.3]
 
 ### Changed
